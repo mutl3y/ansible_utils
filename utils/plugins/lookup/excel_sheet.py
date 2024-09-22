@@ -10,7 +10,7 @@ from ansible.utils.display import Display
 import pandas
 
 DOCUMENTATION = r"""
-    name: excelSheet
+    name: excel_sheet
     author: Mark Heynes <mark.heynes@heynesit.co.uk>
     short_description: read data from named sheet in XLSX file
     description:
@@ -44,7 +44,7 @@ DOCUMENTATION = r"""
 EXAMPLES = """
 - name: msg="Match 'deva' on the 'env' column, but return the 'ip' column"
   ansible.builtin.debug: 
-    msg="The ips in deva are {{ lookup('ansible.legacy.excelSheet', file='sample.xlsx', sheet='infra', 
+    msg="The ips in deva are {{ lookup('ansible.legacy.excel_sheet', file='sample.xlsx', sheet='infra', 
     filter='deva', filter_col='env', col='ip') }}"
 
 # Contents of sample.xlsx
