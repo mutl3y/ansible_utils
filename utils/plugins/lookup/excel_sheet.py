@@ -91,6 +91,8 @@ class LookupModule(LookupBase):
         try:
             df = pandas.read_excel(lookupfile, dtype='string', na_values=paramvals['default'],
                                    keep_default_na=False, sheet_name=paramvals['sheet'])
+            df = whitespace_remover(df)
+
             output_columns = paramvals['cols'] + [paramvals['filter_col']]
             if len(paramvals['cols']) >= 1:
                 for h in df.columns:
@@ -108,3 +110,19 @@ class LookupModule(LookupBase):
 
         except (ValueError, AssertionError) as e:
             raise AnsibleError(e)
+
+def whitespace_remover(dataframe):
+    dataframe = dataframe.rename(columns={v: v.strip() for v in dataframe.columns})
+
+    # iterating over the columns
+    for i in dataframe.columns:
+        # checking datatype of each column
+        if dataframe[i].dtype == 'string':
+
+            # applying strip function on column
+            dataframe[i] = dataframe[i].map(str.strip)
+        else:
+            # if condn. is False then it will do nothing.
+            pass
+    return dataframe
+
