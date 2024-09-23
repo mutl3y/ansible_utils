@@ -3,8 +3,9 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """ excel_merge.py """
 
-from __future__ import annotations
-from ansible.errors import AnsibleError
+from __future__ import (absolute_import, division, print_function, annotations)
+from ansible.errors import AnsibleError, AnsibleOptionsError, AnsibleLookupError
+from ansible.module_utils.common.text.converters import to_native
 from ansible.plugins.lookup import LookupBase
 from ansible.utils.display import Display
 import pandas
@@ -22,7 +23,7 @@ DOCUMENTATION = r"""
         description: List of sheets to return data from ['Sheet1', 'Sheet 2']
         type: list
       cols:
-        description: Restrict returned columns to just these + filter_col.
+        description: Restrict returned columns to these + filter_col if specified.
         type: list
       filter_col:
         description: Column to filter on.
@@ -30,15 +31,16 @@ DOCUMENTATION = r"""
       filter:
         description: Text to filter data on.
         type: string
+      filter_partial_match:
+        description: Use filter in filter_col
+        aliases: [ part ]
+        type: bool
+        default: False
+        
       join_type:
         description: Type of join to use in merge
-        default: 'left'
-        choices:
-          - 'left'
-          - 'right'
-          - 'outer'
-          - 'inner'
-          - 'cross'
+        default: left
+        choices: [ left, right, outer, inner, cross ]
       join_on:
         description: 
           - Column names to use in join. 
@@ -48,15 +50,97 @@ DOCUMENTATION = r"""
         description: Trim leading and trailing spaces from keys and values
         default: True
         type: bool
-      default:
+      nan:
         description: What to return if the cell is empty.
-        default: NA
+        default: NaN
       file:
         description: Name of the XLSX file to open.
         required: true
+        type: path
     notes:
       - if cols is not specified all columns are returned
 """
+
+display = Display()
+
+
+class LookupModule(LookupBase):
+    """ lookup module """
+
+    def run(self, terms, variables=None, **kwargs):
+        """ run method """
+        self.set_options(var_options=variables, direct=kwargs)
+
+        # populate options
+        param_map = self.get_options()
+        display.v("parameters: %s" % str(param_map))
+
+        lookupfile = self.find_file_in_search_path(variables, 'files', param_map['file'])
+
+        if param_map['join_type'] == 'cross' and param_map['join_on'] is not None:
+            raise AnsibleOptionsError("join_type: cross and Join_on are mutually exclusive")
+
+        try:
+            dfs = []
+            for sheet in param_map['sheets']:
+                df = pandas.read_excel(lookupfile, dtype='string', sheet_name=sheet)
+                if param_map['trim']:
+                    df = _whitespace_remover(df)
+                dfs = dfs + [df]
+
+            dataframe = dfs[0]
+            for s in range(1, len(dfs), 1):
+                dataframe = dataframe.merge(dfs[s], how=param_map['join_type'],
+                                            on=param_map['join_on'])
+                display.vvvv('Before filtering \n %s' % dataframe)
+
+            if param_map['filter'] and param_map['filter_col']:
+                if param_map['filter_col'] not in dataframe.columns:
+                    raise AnsibleLookupError(
+                        'filter_col: \'' + param_map['filter_col'] +
+                        '\' not found in ' + to_native(list(dataframe.columns))
+                    )
+
+                for x in dataframe.index:
+                    cell = str(dataframe.loc[x, param_map['filter_col']])
+
+                    if (param_map['filter_partial_match'] and param_map['filter'] not in cell or
+                            not param_map['filter_partial_match'] and param_map['filter'] != cell):
+                        dataframe.drop(x, inplace=True)
+
+            if param_map['cols']:
+                _filter_columns(dataframe, param_map['cols'] + [param_map['filter_col']])
+
+            if len(dataframe) == 0:
+                display.warning(
+                    'no data rows left to return, Use -vvvvv to see data before filtering'
+                )
+
+            if param_map['nan'] != 'nan':
+                dataframe.fillna(inplace=True, value=param_map['nan'])
+
+            return dataframe.to_dict(orient='records')
+
+        except Exception as e:
+            raise AnsibleError(e) from e
+
+
+def _whitespace_remover(df):
+    df = df.rename(columns={v: v.strip() for v in df.columns})
+    for i in df.columns:
+        if df[i].dtype == 'string':
+            df[i] = df[i].map(str.strip)
+    return df
+
+
+def _filter_columns(dataframe, cols):
+    display.vvv('Column\'s found in datastream %s' % list(dataframe.columns))
+    if len(cols) >= 1:
+        for h in dataframe.columns:
+            if h not in cols:
+                display.vvvvv('dropping column %s' % h)
+                dataframe.drop(columns=h, inplace=True)
+
 
 EXAMPLES = """
 - name: msg="Match 'deva' on the 'env' column, but return the 'ip' column"
@@ -96,86 +180,3 @@ RETURN = """
     type: list
     elements: str
 """
-
-display = Display()
-
-
-class LookupModule(LookupBase):
-    """ lookup module """
-
-    def run(self, terms, variables=None, **kwargs):
-        """ run method """
-        self.set_options(var_options=variables, direct=kwargs)
-
-        # populate options
-        paramvals = self.get_options()
-        display.v("parameters: " + str(paramvals))
-
-        lookupfile = self.find_file_in_search_path(variables, 'files', paramvals['file'])
-
-        if paramvals['join_type'] == 'cross' and paramvals['join_on'] is not None:
-            raise ValueError("join_type: cross and Join_on are mutually exclusive")
-
-        try:
-            # Read data as strings from specified sheets
-            dfs = []
-            for sheet in paramvals['sheets']:
-                df = pandas.read_excel(lookupfile, dtype='string',
-                                       na_values=paramvals['default'],
-                                       keep_default_na=False, sheet_name=sheet)
-
-                # trim leading or trailing spaces
-                if paramvals['trim']:
-                    df = _whitespace_remover(df)
-                dfs = dfs + [df]
-
-            dataframe = dfs[0]
-            for s in range(1, len(dfs), 1):
-                dataframe = dataframe.merge(dfs[s], how=paramvals['join_type'],
-                                            on=paramvals['join_on'])
-                display.vvvv(f'Before filtering \n{dataframe}')
-
-            if paramvals['cols']:
-                _filter_columns(dataframe, paramvals['cols'] + [paramvals['filter_col']])
-
-            if paramvals['filter'] and paramvals['filter_col']:
-                if paramvals['filter_col'] not in dataframe.columns:
-                    raise ValueError(
-                        'filter_col: ' + paramvals['filter_col'] +
-                        ' ,not found in ' + str(list(dataframe.columns))
-                    )
-
-                for x in dataframe.index:
-                    if dataframe.loc[x, paramvals['filter_col']] != paramvals['filter']:
-                        dataframe.drop(x, inplace=True)
-            if len(dataframe) == 0:
-                raise ValueError('no data rows left to return, review filters and source data')
-            return dataframe.to_dict(orient='records')
-
-        except (ValueError, AssertionError) as e:
-            raise AnsibleError(e) from e
-
-
-def _whitespace_remover(dataframe):
-    dataframe = dataframe.rename(columns={v: v.strip() for v in dataframe.columns})
-
-    # iterating over the columns
-    for i in dataframe.columns:
-        # checking datatype of each column
-        if dataframe[i].dtype == 'string':
-
-            # applying strip function on column
-            dataframe[i] = dataframe[i].map(str.strip)
-        else:
-            # if condn. is False then it will do nothing.
-            pass
-    return dataframe
-
-
-def _filter_columns(dataframe, cols):
-    display.vvv(f'Column\'s found in datastream {list(dataframe.columns)}')
-    if len(cols) >= 1:
-        for h in dataframe.columns:
-            if h not in cols:
-                display.vvvvv(f'dropping column {h}')
-                dataframe.drop(columns=h, inplace=True)
