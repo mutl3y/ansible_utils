@@ -223,10 +223,12 @@ class LookupModule(LookupBase):
                 % (filter_col, to_native(list(dataframe.columns)))
             )
 
-        col = dataframe[filter_col].astype(str)
+        col = dataframe[filter_col]
         if partial_match:
             mask = col.str.contains(filter_val, na=False)
         else:
+            # For StringDtype, NA == filter_val returns NA which is treated
+            # as False when used as a boolean index, so no special handling needed.
             mask = col == filter_val
 
         filtered = dataframe.loc[mask]
@@ -276,12 +278,12 @@ def _trim_dataframe(df: pandas.DataFrame) -> pandas.DataFrame:
 
 
 EXAMPLES = """
-- name: msg="Match 'deva' on the 'env' column, but return the 'hostname' column"
+- name: Filter by env and return selected columns
   ansible.builtin.debug:
     msg: >-
       {{ lookup('mutl3y.utils.excel_merge', file='sample.xlsx',
          sheets=['infra', 'app_config'],
-         filter='deva', filter_col='env', cols=['hostname']) }}
+         filter='deva', filter_col='env', cols=['name', 'ip']) }}
 
 # Contents of sample.xlsx shown in CSV format for simplicity.
 # sheet_name="infra"

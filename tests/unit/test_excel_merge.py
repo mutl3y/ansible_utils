@@ -131,6 +131,7 @@ def _make_lookup() -> LookupModule:
 
 class TestTrimDataframe(unittest.TestCase):
     def test_strips_column_names(self):
+        # Keys intentionally contain leading/trailing spaces to exercise trimming.
         df = _str_df(**{" env ": ["deva"], " name ": ["host1"]})
         result = _trim_dataframe(df)
         self.assertListEqual(list(result.columns), ["env", "name"])
