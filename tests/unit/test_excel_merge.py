@@ -113,7 +113,7 @@ AnsibleOptionsError = _ansible_errors.AnsibleOptionsError
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _str_df(**columns: list) -> pandas.DataFrame:
+def _str_df(**columns) -> pandas.DataFrame:
     """Build a pandas DataFrame with StringDtype columns."""
     return pandas.DataFrame(
         {k: pandas.array(v, dtype="string") for k, v in columns.items()}

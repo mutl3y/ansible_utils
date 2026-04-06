@@ -41,9 +41,9 @@ DOCUMENTATION = r"""
         type: string
       default:
         description:
-          - Additional NA marker value passed to C(pandas.read_excel) via C(na_values).
-          - This plugin sets C(keep_default_na=False), so pandas default NA markers are disabled.
-          - Only this configured marker (default V('')) is treated as empty.
+          - Value passed to C(pandas.read_excel) via C(na_values).
+          - This plugin sets C(keep_default_na=False), so pandas default markers (for example V('NaN'), V('NA')) are disabled.
+          - Only the configured C(na_values) marker (default V('')) is treated as empty.
         default: ''
       file:
         description: Name of the XLSX file to open.
