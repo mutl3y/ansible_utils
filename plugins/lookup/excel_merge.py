@@ -73,7 +73,8 @@ DOCUMENTATION = r"""
         description:
           - Replacement value for empty (NaN) cells in the final dataframe.
           - When set to the string V(nan) (the default), NaN cells are left as-is.
-          - Set to V('') to return empty strings, or any other string/numeric value.
+          - Set to V('') to return empty strings.
+          - Any JSON/YAML scalar is accepted (for example string, int, float, bool).
         default: nan
       file:
         description: Path to the XLSX file to open.

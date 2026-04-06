@@ -42,7 +42,8 @@ DOCUMENTATION = r"""
       default:
         description:
           - Additional NA marker value passed to C(pandas.read_excel) via C(na_values).
-          - Set this to control which value should be treated as empty in addition to pandas defaults.
+          - This plugin sets C(keep_default_na=False), so pandas default NA markers are disabled.
+          - Use this option to define which value should be treated as empty.
         default: ''
       file:
         description: Name of the XLSX file to open.
