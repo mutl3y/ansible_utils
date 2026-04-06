@@ -44,7 +44,7 @@ DOCUMENTATION = r"""
 EXAMPLES = """
 - name: msg="Match 'deva' on the 'env' column, but return the 'ip' column"
   ansible.builtin.debug: 
-    msg="The ips in deva are {{ lookup('ansible.legacy.excel_sheet', file='sample.xlsx', sheet='infra', 
+    msg="The ips in deva are {{ lookup('mutl3y.utils.excel_sheet', file='sample.xlsx', sheet='infra', 
     filter='deva', filter_col='env', col='ip') }}"
 
 # Contents of sample.xlsx
