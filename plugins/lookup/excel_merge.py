@@ -78,7 +78,7 @@ class LookupModule(LookupBase):
         lookupfile = self.find_file_in_search_path(variables, 'files', param_map['file'])
 
         if param_map['join_type'] == 'cross' and param_map['join_on'] is not None:
-            raise AnsibleOptionsError("join_type: cross and Join_on are mutually exclusive")
+            raise AnsibleOptionsError("join_type: cross and join_on are mutually exclusive")
 
         try:
             dfs = []
