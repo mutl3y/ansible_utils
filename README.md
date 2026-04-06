@@ -38,4 +38,37 @@ Use fully qualified collection names (FQCN), for example:
 - `lookup('mutl3y.utils.excel_sheet', ...)`
 - `lookup('mutl3y.utils.excel_merge', ...)`
 
-See this README for plugin usage examples.
+## Usage examples
+
+Lookup from a single sheet:
+
+```yaml
+- name: Read rows from one sheet
+  ansible.builtin.debug:
+    msg: >-
+      {{ lookup(
+          'mutl3y.utils.excel_sheet',
+          file='sample.xlsx',
+          sheet='infra',
+          filter='deva',
+          filter_col='env',
+          cols=['ip']
+      ) }}
+```
+
+Lookup and merge multiple sheets:
+
+```yaml
+- name: Merge rows across sheets
+  ansible.builtin.debug:
+    msg: >-
+      {{ lookup(
+          'mutl3y.utils.excel_merge',
+          file='sample.xlsx',
+          sheets=['infra', 'app_config'],
+          join_on=['env', 'name'],
+          join_type='left',
+          filter='deva',
+          filter_col='env'
+      ) }}
+```
