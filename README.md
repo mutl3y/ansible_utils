@@ -11,7 +11,7 @@ The collection currently includes Excel lookup plugins:
 
 Collection source is in:
 
-- `/home/runner/work/ansible_utils/ansible_utils/utils`
+- `./utils`
 
 ## Repository layout
 
@@ -30,7 +30,7 @@ Collection source is in:
 ## Build and install the collection
 
 ```bash
-cd /home/runner/work/ansible_utils/ansible_utils
+cd <repository-root>
 ansible-galaxy collection build ./utils
 ansible-galaxy collection install ./utils/mutl3y-utils-*.tar.gz
 ```
@@ -42,4 +42,4 @@ Use fully qualified collection names (FQCN), for example:
 - `lookup('mutl3y.utils.excel_sheet', ...)`
 - `lookup('mutl3y.utils.excel_merge', ...)`
 
-See `/home/runner/work/ansible_utils/ansible_utils/utils/README.md` for detailed plugin examples.
+See `./utils/README.md` for detailed plugin examples.
