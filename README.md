@@ -9,16 +9,12 @@ The collection currently includes Excel lookup plugins:
 - `mutl3y.utils.excel_sheet`: read records from a single `.xlsx` worksheet.
 - `mutl3y.utils.excel_merge`: read and merge records from multiple worksheets.
 
-Collection source is in:
-
-- `./utils`
-
 ## Repository layout
 
-- `utils/galaxy.yml` - collection metadata
-- `utils/meta/runtime.yml` - collection runtime metadata
-- `utils/plugins/lookup/excel_sheet.py` - single-sheet lookup plugin
-- `utils/plugins/lookup/excel_merge.py` - multi-sheet merge lookup plugin
+- `galaxy.yml` - collection metadata
+- `meta/runtime.yml` - collection runtime metadata
+- `plugins/lookup/excel_sheet.py` - single-sheet lookup plugin
+- `plugins/lookup/excel_merge.py` - multi-sheet merge lookup plugin
 
 ## Prerequisites
 
@@ -31,8 +27,8 @@ Collection source is in:
 
 ```bash
 cd ansible_utils
-ansible-galaxy collection build ./utils
-ansible-galaxy collection install ./utils/mutl3y-utils-*.tar.gz
+ansible-galaxy collection build .
+ansible-galaxy collection install ./mutl3y-utils-*.tar.gz
 ```
 
 ## Use the plugins in playbooks
@@ -42,4 +38,37 @@ Use fully qualified collection names (FQCN), for example:
 - `lookup('mutl3y.utils.excel_sheet', ...)`
 - `lookup('mutl3y.utils.excel_merge', ...)`
 
-See `./utils/README.md` for detailed plugin examples.
+## Usage examples
+
+Lookup from a single sheet:
+
+```yaml
+- name: Read rows from one sheet
+  ansible.builtin.debug:
+    msg: >-
+      {{ lookup(
+          'mutl3y.utils.excel_sheet',
+          file='sample.xlsx',
+          sheet='infra',
+          filter='deva',
+          filter_col='env',
+          cols=['ip']
+      ) }}
+```
+
+Lookup and merge multiple sheets:
+
+```yaml
+- name: Merge rows across sheets
+  ansible.builtin.debug:
+    msg: >-
+      {{ lookup(
+          'mutl3y.utils.excel_merge',
+          file='sample.xlsx',
+          sheets=['infra', 'app_config'],
+          join_on=['env', 'name'],
+          join_type='left',
+          filter='deva',
+          filter_col='env'
+      ) }}
+```

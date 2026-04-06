@@ -78,7 +78,7 @@ class LookupModule(LookupBase):
         lookupfile = self.find_file_in_search_path(variables, 'files', param_map['file'])
 
         if param_map['join_type'] == 'cross' and param_map['join_on'] is not None:
-            raise AnsibleOptionsError("join_type: cross and Join_on are mutually exclusive")
+            raise AnsibleOptionsError("join_type: cross and join_on are mutually exclusive")
 
         try:
             dfs = []
@@ -145,8 +145,8 @@ def _filter_columns(dataframe, cols):
 EXAMPLES = """
 - name: msg="Match 'deva' on the 'env' column, but return the 'ip' column"
   ansible.builtin.debug: 
-    msg="The ips in deva are {{ lookup('ansible.legacy.excel_merge', file='sample.xlsx', sheets=['infra', 'app_config'], 
-    filter='deva', filter_col='env', col='hostname') }}"
+    msg="The ips in deva are {{ lookup('mutl3y.utils.excel_merge', file='sample.xlsx', sheets=['infra', 'app_config'], 
+    filter='deva', filter_col='env', cols=['hostname']) }}"
 
 # Contents of sample2.xlsx shown in csv format for simplicity
 sheet_name="infra"
