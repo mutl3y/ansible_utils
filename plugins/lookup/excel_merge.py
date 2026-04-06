@@ -53,7 +53,12 @@ DOCUMENTATION = r"""
           - Type of pandas merge join to use when combining multiple sheets.
           - V(cross) is mutually exclusive with O(join_on).
         default: left
-        choices: [ left, right, outer, inner, cross ]
+        choices:
+          - left
+          - right
+          - outer
+          - inner
+          - cross
       join_on:
         description:
           - Column name(s) to use as join keys when merging sheets.

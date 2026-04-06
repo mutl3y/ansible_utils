@@ -41,8 +41,8 @@ DOCUMENTATION = r"""
         type: string
       default:
         description:
-          - Value used for empty cells while reading Excel.
-          - Defaults to an empty string.
+          - Additional NA marker value passed to C(pandas.read_excel) via C(na_values).
+          - Set this to control which value should be treated as empty in addition to pandas defaults.
         default: ''
       file:
         description: Name of the XLSX file to open.
