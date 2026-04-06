@@ -13,10 +13,10 @@ This collection provides lookup plugins for working with Excel (`.xlsx`) data in
 
 ## Requirements
 
-- `ansible-core` (set by your environment/runtime policy)
+- `ansible-core >= 2.11`
 - Python dependencies required by the plugins:
   - `pandas`
-  - Excel engine dependency such as `openpyxl` for `.xlsx` files
+  - Excel engine dependency: `openpyxl` (required for `.xlsx` files)
 
 ## Installation
 

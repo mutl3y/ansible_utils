@@ -30,7 +30,7 @@ Collection source is in:
 ## Build and install the collection
 
 ```bash
-cd <repository-root>
+cd ansible_utils
 ansible-galaxy collection build ./utils
 ansible-galaxy collection install ./utils/mutl3y-utils-*.tar.gz
 ```
