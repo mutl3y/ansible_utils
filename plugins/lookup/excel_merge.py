@@ -3,7 +3,10 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 """ excel_merge.py """
 
-from __future__ import (absolute_import, division, print_function, annotations)
+from __future__ import annotations
+
+from typing import Any
+
 from ansible.errors import AnsibleError, AnsibleOptionsError, AnsibleLookupError
 from ansible.module_utils.common.text.converters import to_native
 from ansible.plugins.lookup import LookupBase
@@ -15,168 +18,305 @@ DOCUMENTATION = r"""
     author: Mark Heynes <mark.heynes@heynesit.co.uk>
     short_description: read data from multiple sheets in XLSX file
     description:
-      - The excel_merge lookup reads the contents of multiple sheets from an XLSX (Excel Open XML Spreadsheet) format 
-        file.
-      - All values are returned as string data
+      - The excel_merge lookup reads the contents of multiple sheets from an XLSX
+        (Excel Open XML Spreadsheet) format file and merges them into a single result.
+      - All values are returned as string data.
     options:
       sheets:
-        description: List of sheets to return data from ['Sheet1', 'Sheet 2']
+        description:
+          - List of sheet names to read and merge, e.g. C(['Sheet1', 'Sheet2']).
+          - At least one sheet name must be provided.
         type: list
+        required: true
       cols:
-        description: Restrict returned columns to these + filter_col if specified.
+        description:
+          - Restrict the returned columns to this list.
+          - O(filter_col) is always included in the output when specified.
+          - If omitted, all columns are returned.
         type: list
       filter_col:
-        description: Column to filter on.
+        description: Column name to apply the filter against.
         type: string
       filter:
-        description: Text to filter data on.
+        description: Value to filter rows by. Used together with O(filter_col).
         type: string
       filter_partial_match:
-        description: Use filter in filter_col
+        description:
+          - When V(true), keep rows where O(filter) appears as a substring of the
+            O(filter_col) cell value (case-sensitive).
+          - When V(false) (default), keep only rows where the cell exactly equals O(filter).
         aliases: [ part ]
         type: bool
-        default: False
-        
+        default: false
       join_type:
-        description: Type of join to use in merge
+        description:
+          - Type of pandas merge join to use when combining multiple sheets.
+          - V(cross) is mutually exclusive with O(join_on).
         default: left
-        choices: [ left, right, outer, inner, cross ]
+        choices:
+          - left
+          - right
+          - outer
+          - inner
+          - cross
       join_on:
-        description: 
-          - Column names to use in join. 
-          - Defaults to common keys between sheets in the order they are found
-          - Mutually exclusive with the option cross of O(join_type).
+        description:
+          - Column name(s) to use as join keys when merging sheets.
+          - When omitted, pandas merges on all column names that are common to
+            both sheets (in the order they appear).
+          - Mutually exclusive with V(cross) join type.
       trim:
-        description: Trim leading and trailing spaces from keys and values
-        default: True
+        description: Trim leading and trailing whitespace from column names and string cell values.
+        default: true
         type: bool
       nan:
-        description: What to return if the cell is empty.
-        default: NaN
+        description:
+          - Replacement value for empty (NaN) cells in the final dataframe.
+          - When set to the string V(nan) (the default), NaN cells are left as-is.
+          - Set to V('') to return empty strings.
+          - Any JSON/YAML scalar is accepted (for example string, int, float, bool).
+        default: nan
       file:
-        description: Name of the XLSX file to open.
+        description: Path to the XLSX file to open.
         required: true
         type: path
     notes:
-      - if cols is not specified all columns are returned
+      - If O(cols) is not specified, all columns are returned.
 """
 
 display = Display()
 
+_VALID_JOIN_TYPES = frozenset({"left", "right", "outer", "inner", "cross"})
+
 
 class LookupModule(LookupBase):
-    """ lookup module """
+    """Ansible lookup module: excel_merge."""
 
-    def run(self, terms, variables=None, **kwargs):
-        """ run method """
+    def run(self, terms: list, variables: dict | None = None, **kwargs: Any) -> list[dict]:
+        """Execute the lookup and return a list of row dicts."""
         self.set_options(var_options=variables, direct=kwargs)
+        param_map: dict = self.get_options()
+        display.v("excel_merge parameters: %s" % to_native(param_map))
 
-        # populate options
-        param_map = self.get_options()
-        display.v("parameters: %s" % str(param_map))
+        # --- parameter validation -------------------------------------------
+        sheets: list = param_map.get("sheets") or []
+        if not sheets:
+            raise AnsibleOptionsError("excel_merge: 'sheets' must be a non-empty list")
 
-        lookupfile = self.find_file_in_search_path(variables, 'files', param_map['file'])
+        join_type: str = param_map["join_type"]
+        if join_type not in _VALID_JOIN_TYPES:
+            raise AnsibleOptionsError(
+                "excel_merge: invalid join_type %r; must be one of %s"
+                % (join_type, sorted(_VALID_JOIN_TYPES))
+            )
 
-        if param_map['join_type'] == 'cross' and param_map['join_on'] is not None:
-            raise AnsibleOptionsError("join_type: cross and join_on are mutually exclusive")
+        join_on = param_map.get("join_on")
+        if join_type == "cross" and join_on is not None:
+            raise AnsibleOptionsError(
+                "excel_merge: 'join_type: cross' and 'join_on' are mutually exclusive"
+            )
+
+        lookupfile = self.find_file_in_search_path(variables, "files", param_map["file"])
+        if not lookupfile:
+            raise AnsibleError(
+                "excel_merge: file %r not found in the configured search path"
+                % to_native(param_map["file"])
+            )
 
         try:
-            dfs = []
-            for sheet in param_map['sheets']:
-                df = pandas.read_excel(lookupfile, dtype='string', sheet_name=sheet)
-                if param_map['trim']:
-                    df = _whitespace_remover(df)
-                dfs = dfs + [df]
+            dfs = self._read_sheets(lookupfile, sheets, param_map["trim"])
+            dataframe = self._merge_dataframes(dfs, join_type, join_on)
 
-            dataframe = dfs[0]
-            for s in range(1, len(dfs), 1):
-                dataframe = dataframe.merge(dfs[s], how=param_map['join_type'],
-                                            on=param_map['join_on'])
-                display.vvvv('Before filtering \n %s' % dataframe)
-
-            if param_map['filter'] and param_map['filter_col']:
-                if param_map['filter_col'] not in dataframe.columns:
-                    raise AnsibleLookupError(
-                        'filter_col: \'' + param_map['filter_col'] +
-                        '\' not found in ' + to_native(list(dataframe.columns))
-                    )
-
-                for x in dataframe.index:
-                    cell = str(dataframe.loc[x, param_map['filter_col']])
-
-                    if (param_map['filter_partial_match'] and param_map['filter'] not in cell or
-                            not param_map['filter_partial_match'] and param_map['filter'] != cell):
-                        dataframe.drop(x, inplace=True)
-
-            if param_map['cols']:
-                _filter_columns(dataframe, param_map['cols'] + [param_map['filter_col']])
-
-            if len(dataframe) == 0:
-                display.warning(
-                    'no data rows left to return, Use -vvvvv to see data before filtering'
+            filter_val = param_map.get("filter")
+            filter_col = param_map.get("filter_col")
+            if filter_val and filter_col:
+                dataframe = self._apply_filter(
+                    dataframe,
+                    filter_col,
+                    filter_val,
+                    partial_match=param_map.get("filter_partial_match", False),
                 )
 
-            if param_map['nan'] != 'nan':
-                dataframe.fillna(inplace=True, value=param_map['nan'])
+            cols = param_map.get("cols")
+            if cols:
+                dataframe = self._select_columns(dataframe, cols, filter_col)
 
-            return dataframe.to_dict(orient='records')
+            if len(dataframe) == 0:
+                display.warning("excel_merge: no data rows left to return")
 
-        except Exception as e:
-            raise AnsibleError(e) from e
+            dataframe = self._normalize_nan(dataframe, param_map["nan"])
+            return dataframe.to_dict(orient="records")
+
+        except (AnsibleError, AnsibleOptionsError, AnsibleLookupError):
+            raise
+        except FileNotFoundError as exc:
+            raise AnsibleError(
+                "excel_merge: file %r not found: %s"
+                % (to_native(param_map["file"]), to_native(exc))
+            ) from exc
+        except Exception as exc:
+            raise AnsibleError(
+                "excel_merge: unexpected error: %s" % to_native(exc)
+            ) from exc
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _read_sheets(
+        self, path: str, sheets: list[str], trim: bool
+    ) -> list[pandas.DataFrame]:
+        """Read each sheet from *path* and return a list of DataFrames."""
+        dfs: list[pandas.DataFrame] = []
+        for sheet in sheets:
+            try:
+                df = pandas.read_excel(path, dtype="string", sheet_name=sheet)
+            except ValueError as exc:
+                raise AnsibleLookupError(
+                    "excel_merge: sheet %r not found in %r: %s"
+                    % (sheet, to_native(path), to_native(exc))
+                ) from exc
+            except Exception as exc:
+                raise AnsibleError(
+                    "excel_merge: error reading sheet %r from %r: %s"
+                    % (sheet, to_native(path), to_native(exc))
+                ) from exc
+            if trim:
+                df = _trim_dataframe(df)
+            display.vvv(
+                "excel_merge: read sheet %r — %d rows, columns: %s"
+                % (sheet, len(df), list(df.columns))
+            )
+            dfs.append(df)
+        return dfs
+
+    def _merge_dataframes(
+        self,
+        dfs: list[pandas.DataFrame],
+        join_type: str,
+        join_on: list[str] | str | None,
+    ) -> pandas.DataFrame:
+        """Merge a list of DataFrames sequentially with the given join parameters."""
+        if not dfs:
+            raise AnsibleOptionsError("excel_merge: no dataframes to merge")
+
+        result = dfs[0]
+        for df in dfs[1:]:
+            try:
+                result = result.merge(df, how=join_type, on=join_on)
+            except Exception as exc:
+                raise AnsibleError(
+                    "excel_merge: merge failed (join_type=%r, join_on=%r): %s"
+                    % (join_type, join_on, to_native(exc))
+                ) from exc
+            display.vvvv(
+                "excel_merge: after merge — %d rows, columns: %s"
+                % (len(result), list(result.columns))
+            )
+        return result
+
+    def _apply_filter(
+        self,
+        dataframe: pandas.DataFrame,
+        filter_col: str,
+        filter_val: str,
+        partial_match: bool = False,
+    ) -> pandas.DataFrame:
+        """Return a filtered copy of *dataframe* based on the filter parameters."""
+        if filter_col not in dataframe.columns:
+            raise AnsibleLookupError(
+                "excel_merge: filter_col %r not found; available columns: %s"
+                % (filter_col, to_native(list(dataframe.columns)))
+            )
+
+        col = dataframe[filter_col]
+        if partial_match:
+            mask = col.str.contains(filter_val, na=False)
+        else:
+            # For StringDtype, NA == filter_val returns NA which is treated
+            # as False when used as a boolean index, so no special handling needed.
+            mask = col == filter_val
+
+        filtered = dataframe.loc[mask]
+        display.vvv(
+            "excel_merge: filter %r=%r (partial=%s) kept %d/%d rows"
+            % (filter_col, filter_val, partial_match, len(filtered), len(dataframe))
+        )
+        return filtered
+
+    def _select_columns(
+        self,
+        dataframe: pandas.DataFrame,
+        cols: list[str],
+        filter_col: str | None,
+    ) -> pandas.DataFrame:
+        """Return a copy of *dataframe* with only the requested columns."""
+        keep = list(cols)
+        if filter_col and filter_col not in keep:
+            keep.append(filter_col)
+
+        missing = [c for c in keep if c not in dataframe.columns]
+        if missing:
+            raise AnsibleLookupError(
+                "excel_merge: requested column(s) %s not found; available: %s"
+                % (missing, to_native(list(dataframe.columns)))
+            )
+
+        display.vvv("excel_merge: selecting columns %s" % keep)
+        return dataframe.loc[:, keep]
+
+    def _normalize_nan(
+        self, dataframe: pandas.DataFrame, nan_value: Any
+    ) -> pandas.DataFrame:
+        """Fill NaN cells with *nan_value* if it is not the sentinel string 'nan'."""
+        if nan_value != "nan":
+            return dataframe.fillna(value=nan_value)
+        return dataframe
 
 
-def _whitespace_remover(df):
-    df = df.rename(columns={v: v.strip() for v in df.columns})
-    for i in df.columns:
-        if df[i].dtype == 'string':
-            df[i] = df[i].map(str.strip)
+def _trim_dataframe(df: pandas.DataFrame) -> pandas.DataFrame:
+    """Trim whitespace from column names and all string-typed cells."""
+    df = df.rename(columns={c: c.strip() for c in df.columns})
+    for col in df.columns:
+        if df[col].dtype == "string":
+            df[col] = df[col].str.strip()
     return df
 
 
-def _filter_columns(dataframe, cols):
-    display.vvv('Column\'s found in datastream %s' % list(dataframe.columns))
-    if len(cols) >= 1:
-        for h in dataframe.columns:
-            if h not in cols:
-                display.vvvvv('dropping column %s' % h)
-                dataframe.drop(columns=h, inplace=True)
-
-
 EXAMPLES = """
-- name: msg="Match 'deva' on the 'env' column, but return the 'ip' column"
-  ansible.builtin.debug: 
-    msg="The ips in deva are {{ lookup('mutl3y.utils.excel_merge', file='sample.xlsx', sheets=['infra', 'app_config'], 
-    filter='deva', filter_col='env', cols=['hostname']) }}"
+- name: Filter by env and return selected columns
+  ansible.builtin.debug:
+    msg: >-
+      {{ lookup('mutl3y.utils.excel_merge', file='sample.xlsx',
+         sheets=['infra', 'app_config'],
+         filter='deva', filter_col='env', cols=['name', 'ip']) }}
 
-# Contents of sample2.xlsx shown in csv format for simplicity
-sheet_name="infra"
+# Contents of sample.xlsx shown in CSV format for simplicity.
+# sheet_name="infra"
+#
+# env,name,ip,ram,first_disk
+# deva,deva-dcb-123t,1.1.1.1,128,40
+# deva,deva-ncs-124t,1.1.2.2,64,35
+# devb,abc-dcb-223t,1.2.1.1,46,35
+#
+# sheet_name="app_config"
+#
+# env,name,Xmx,Xms,Xss
+# deva,deva-dcb-123t,4096,1024,128
+# deva,deva-ncs-123t,3218,512,64
 
-env, name, ip, ram, first_disk
-deva, deva-dcb-123t, 1.1.1.1, 128, 40
-deva, deva-ncs-124t, 1.1.2.2, 64, 35
-devb, abc-dcb-223t, 1.2.1.1, 46, 35
-devb, devb-ncs-224t, 1.2.1.2, 46, 35
-devb, devb-ncs-225t, 1.2.1.3, 64, 40
-devc, devc-dcb-323t, 1.3.1.1, 64, 40
-devc, devc-ncs-324t, 1.3.1.2, 32, 60
-devd, devd-dcb-423t, 1.4.1.1, 32, 60
-devd, devd-ncs-424t, 1.4.1.2, 32, 60
-devd, devd-ncs-425t, 1.4.1.3, 32, 50
-
-sheet_name="app_config"
-
-env, name, Xmx, Xms, Xss
-deva, deva-dcb-123t, 4096, 1024, 128
-deva, deva-ncs-123t, 3218, 512, 64
-devb, abc-dcb-123t, 2048, 128, 32
-devb, devb-ncs-123t, 1024, 64, 32
-
+- name: Merge on explicit keys, inner join
+  ansible.builtin.debug:
+    msg: >-
+      {{ lookup('mutl3y.utils.excel_merge', file='sample.xlsx',
+         sheets=['infra', 'app_config'],
+         join_on=['env', 'name'], join_type='inner') }}
 """
 
 RETURN = """
   _raw:
     description:
-      - value(s) stored in file column
+      - List of dicts, one per row, where keys are column names and values are cell values.
     type: list
-    elements: str
+    elements: dict
 """

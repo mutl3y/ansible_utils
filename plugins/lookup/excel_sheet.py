@@ -4,7 +4,11 @@
 """ excel_sheet.py """
 
 from __future__ import annotations
-from ansible.errors import AnsibleError
+
+from typing import Any
+
+from ansible.errors import AnsibleError, AnsibleLookupError, AnsibleOptionsError
+from ansible.module_utils.common.text.converters import to_native
 from ansible.plugins.lookup import LookupBase
 from ansible.utils.display import Display
 import pandas
@@ -14,62 +18,56 @@ DOCUMENTATION = r"""
     author: Mark Heynes <mark.heynes@heynesit.co.uk>
     short_description: read data from named sheet in XLSX file
     description:
-      - The excel_sheet lookup reads the contents of a named sheet from an XLSX (Excel Open XML Spreadsheet) format file.
+      - The excel_sheet lookup reads the contents of a named sheet from an XLSX
+        (Excel Open XML Spreadsheet) format file.
     options:
       sheet:
-        description: sheet name to return
+        description: Name of the sheet to read.
+        type: string
+        required: true
       cols:
-        description: restrict columns returned to these + filter_col.
+        description:
+          - Restrict returned columns to this list.
+          - O(filter_col) is always included when specified.
         default: []
         type: list
       filter_col:
-        description: column to filter on.
+        description: Column name to filter on (used with O(filter)).
         default: null
         type: string
       filter:
-        description: text to filter data on.
+        description: Exact value to keep in O(filter_col).
         default: null
         type: string
       default:
-        description: what to return if the cell is empty.
-        default: 
+        description:
+          - Value passed to C(pandas.read_excel) via C(na_values).
+          - This plugin sets C(keep_default_na=False), so pandas default markers (for example V('NaN'), V('NA')) are disabled.
+          - Only the configured C(na_values) marker (default V('')) is treated as empty.
+        default: ''
       file:
-        description: name of the XLSX file to open.
+        description: Name of the XLSX file to open.
         default: null
         required: true
+        type: path
     notes:
-      - if cols is not specified all columns are returned
+      - If O(cols) is not specified all columns are returned.
 """
 
 EXAMPLES = """
-- name: msg="Match 'deva' on the 'env' column, but return the 'ip' column"
-  ansible.builtin.debug: 
-    msg="The ips in deva are {{ lookup('mutl3y.utils.excel_sheet', file='sample.xlsx', sheet='infra', 
-    filter='deva', filter_col='env', col='ip') }}"
-
-# Contents of sample.xlsx
-sheet_name="infra"
-
-env   name           ip       ram         first_disk
-deva  deva-dcb-123t  1.1.1.1  NaN         NaN
-deva  deva-ncs-123t  1.1.2.2  NaN         NaN
-devb   abc-dcb-123t  1.2.1.1  NaN         NaN
-devb  devb-ncs-123t  1.2.1.2  NaN         NaN
-devb  devb-ncs-123t  1.2.1.3  NaN         NaN
-devc  devc-dcb-123t  1.3.1.1  NaN         NaN
-devc  devc-ncs-123t  1.3.1.2  NaN         NaN
-devd  devd-dcb-123t  1.4.1.1  NaN         NaN
-devd  devd-ncs-123t  1.4.1.2  NaN         NaN
-devd  devd-ncs-123t  1.4.1.3  NaN         NaN
-
+- name: Match 'deva' on 'env' column and return 'ip'
+  ansible.builtin.debug:
+    msg: >-
+      {{ lookup('mutl3y.utils.excel_sheet', file='sample.xlsx',
+         sheet='infra', filter='deva', filter_col='env', cols=['ip']) }}
 """
 
 RETURN = """
   _raw:
     description:
-      - value(s) stored in file column
+      - List of dicts, one per row, where keys are column names and values are cell values.
     type: list
-    elements: str
+    elements: dict
 """
 
 display = Display()
@@ -78,51 +76,101 @@ display = Display()
 class LookupModule(LookupBase):
     """ lookup module """
 
-    def run(self, terms, variables=None, **kwargs):
-        """ run method """
+    def run(self, terms: list, variables: dict | None = None, **kwargs: Any) -> list[dict]:
+        """run method"""
         self.set_options(var_options=variables, direct=kwargs)
+        paramvals: dict = self.get_options()
+        display.v("excel_sheet parameters: %s" % to_native(paramvals))
 
-        # populate options
-        paramvals = self.get_options()
-        display.v("parameters: " + str(paramvals))
-
+        self._validate_params(paramvals)
         lookupfile = self.find_file_in_search_path(variables, 'files', paramvals['file'])
+        if not lookupfile:
+            raise AnsibleError(
+                "excel_sheet: file %r not found in the configured search path"
+                % to_native(paramvals['file'])
+            )
 
         try:
-            df = pandas.read_excel(lookupfile, dtype='string', na_values=paramvals['default'],
-                                   keep_default_na=False, sheet_name=paramvals['sheet'])
-            df = whitespace_remover(df)
+            dataframe = self._read_sheet(lookupfile, paramvals['sheet'], paramvals['default'])
+            dataframe = _trim_dataframe(dataframe)
+            dataframe = self._apply_filter(
+                dataframe, paramvals.get('filter_col'), paramvals.get('filter')
+            )
+            dataframe = self._select_columns(
+                dataframe, paramvals.get('cols') or [], paramvals.get('filter_col')
+            )
 
-            output_columns = paramvals['cols'] + [paramvals['filter_col']]
-            if len(paramvals['cols']) >= 1:
-                for h in df.columns:
-                    if h not in output_columns:
-                        df.drop(columns=h, inplace=True)
-            if paramvals['filter'] and paramvals['filter_col']:
-                if paramvals['filter_col'] not in df.columns:
-                    raise ValueError('filter_col: ' + paramvals['filter_col'] + ' ,not found in ' + str(list(df.columns)))
-                for x in df.index:
-                    if df.loc[x, paramvals['filter_col']] != paramvals['filter']:
-                        df.drop(x, inplace=True)
-            if len(df) == 0:
-                raise ValueError('no data rows left to return, review filters and source data')
-            return df.to_dict(orient='records')
+            if len(dataframe) == 0:
+                raise AnsibleLookupError(
+                    'excel_sheet: no data rows left to return, review filters and source data'
+                )
 
-        except (ValueError, AssertionError) as e:
-            raise AnsibleError(e)
+            return dataframe.to_dict(orient='records')
 
-def whitespace_remover(dataframe):
-    dataframe = dataframe.rename(columns={v: v.strip() for v in dataframe.columns})
+        except (AnsibleError, AnsibleLookupError, AnsibleOptionsError):
+            raise
+        except FileNotFoundError as exc:
+            raise AnsibleError(
+                "excel_sheet: file %r not found: %s"
+                % (to_native(paramvals['file']), to_native(exc))
+            ) from exc
+        except Exception as exc:
+            raise AnsibleError("excel_sheet: unexpected error: %s" % to_native(exc)) from exc
 
-    # iterating over the columns
-    for i in dataframe.columns:
-        # checking datatype of each column
-        if dataframe[i].dtype == 'string':
+    def _validate_params(self, paramvals: dict) -> None:
+        if not paramvals.get('sheet'):
+            raise AnsibleOptionsError("excel_sheet: 'sheet' must be provided")
 
-            # applying strip function on column
-            dataframe[i] = dataframe[i].map(str.strip)
-        else:
-            # if condn. is False then it will do nothing.
-            pass
+    def _read_sheet(
+        self, lookupfile: str, sheet_name: str, default_value: Any
+    ) -> pandas.DataFrame:
+        try:
+            return pandas.read_excel(
+                lookupfile,
+                dtype='string',
+                na_values=default_value,
+                keep_default_na=False,
+                sheet_name=sheet_name,
+            )
+        except ValueError as exc:
+            raise AnsibleLookupError(
+                "excel_sheet: sheet %r not found in %r: %s"
+                % (sheet_name, to_native(lookupfile), to_native(exc))
+            ) from exc
+
+    def _apply_filter(
+        self, dataframe: pandas.DataFrame, filter_col: str | None, filter_value: str | None
+    ) -> pandas.DataFrame:
+        if not (filter_col and filter_value):
+            return dataframe
+        if filter_col not in dataframe.columns:
+            raise AnsibleLookupError(
+                "excel_sheet: filter_col %r not found; available columns: %s"
+                % (filter_col, to_native(list(dataframe.columns)))
+            )
+        mask = dataframe[filter_col] == filter_value
+        return dataframe.loc[mask]
+
+    def _select_columns(
+        self, dataframe: pandas.DataFrame, columns: list[str], filter_col: str | None
+    ) -> pandas.DataFrame:
+        if not columns:
+            return dataframe
+        keep = list(columns)
+        if filter_col and filter_col not in keep:
+            keep.append(filter_col)
+        missing = [column for column in keep if column not in dataframe.columns]
+        if missing:
+            raise AnsibleLookupError(
+                "excel_sheet: requested column(s) %s not found; available: %s"
+                % (missing, to_native(list(dataframe.columns)))
+            )
+        return dataframe.loc[:, keep]
+
+
+def _trim_dataframe(dataframe: pandas.DataFrame) -> pandas.DataFrame:
+    dataframe = dataframe.rename(columns={column: column.strip() for column in dataframe.columns})
+    for column in dataframe.columns:
+        if dataframe[column].dtype == 'string':
+            dataframe[column] = dataframe[column].str.strip()
     return dataframe
-
